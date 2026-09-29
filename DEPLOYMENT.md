@@ -1,179 +1,183 @@
-# Deployment Guide
+# PRISM — Deployment Guide
 
-## Quick Start with Docker Compose
+This guide covers deploying **PRISM** (*Prescription Recognition and Intelligent Safety for Medication*) across cloud platforms, containerized environments, and standalone servers.
 
-1. **Clone and setup**:
+PRISM has two decoupled components:
+- **Backend API**: Python 3.11 + FastAPI + PyTorch/TrOCR + Groq Vision API
+- **Frontend App**: Next.js 14 + Tailwind CSS + TypeScript
+
+---
+
+## 🚀 Recommended Cloud Deployment (Free / Serverless)
+
+The easiest and most cost-effective production deployment:
+- **Frontend**: [Vercel](https://vercel.com) (Free global CDN & edge hosting)
+- **Backend**: [Render](https://render.com) or [Railway](https://railway.app) (Free / Hobby tier)
+
+---
+
+### Step 1: Deploy Backend (Render / Railway)
+
+#### Deploying on Render (Web Service):
+1. Go to [render.com](https://render.com) and click **New → Web Service**.
+2. Connect your GitHub repository: `https://github.com/Srinath-Y-dev/PRISM.git`.
+3. Configure the service:
+   - **Name**: `prism-backend`
+   - **Root Directory**: `backend`
+   - **Environment**: `Python 3`
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+   - **Plan**: Starter / Standard (At least 1GB–2GB RAM recommended for TrOCR)
+4. Add **Environment Variables**:
+   ```ini
+   GROQ_API_KEY=your_groq_api_key_here
+   GROQ_MODEL=qwen/qwen3.8-27b
+   GROQ_VISION_MODEL=qwen/qwen3.8-27b
+   DATABASE_URL=sqlite:///./prescriptions.db
+   TROCR_MODEL=microsoft/trocr-large-handwritten
+   ```
+5. Click **Create Web Service**. Once deployed, copy your backend URL (e.g. `https://prism-backend.onrender.com`).
+
+---
+
+### Step 2: Deploy Frontend (Vercel)
+
+1. Go to [vercel.com](https://vercel.com) and click **Add New... → Project**.
+2. Import `https://github.com/Srinath-Y-dev/PRISM.git`.
+3. Configure project settings:
+   - **Framework Preset**: `Next.js`
+   - **Root Directory**: Click *Edit* and select `frontend`
+4. Add **Environment Variable**:
+   | Key | Value |
+   |---|---|
+   | `NEXT_PUBLIC_API_URL` | `https://prism-backend.onrender.com` (Your backend URL from Step 1) |
+5. Click **Deploy**. Vercel will build and serve your app globally on an SSL domain (`https://prism.vercel.app`).
+
+---
+
+## 🐳 Containerized Deployment (Docker & Docker Compose)
+
+To run the complete PRISM stack locally or on any cloud VPS (AWS EC2, DigitalOcean, Hetzner, Linode):
+
+### 1. Clone & Set Environment
 ```bash
-git clone <your-repo>
-cd prescription-reader
-cp backend/.env.example backend/.env
+git clone https://github.com/Srinath-Y-dev/PRISM.git
+cd PRISM
+
+# Set your Groq API key
+export GROQ_API_KEY="your_groq_api_key_here"  # On Windows: set GROQ_API_KEY=your_key
 ```
 
-2. **Add your Groq API key** to `backend/.env`:
-```
-GROQ_API_KEY=your_groq_api_key_here
-```
-
-3. **Run with Docker**:
+### 2. Build & Launch
 ```bash
-docker-compose up --build
+docker-compose up --build -d
 ```
 
-Access at: http://localhost:3000
+### 3. Verify
+- **Frontend**: `http://localhost:3000`
+- **Backend API & Swagger Docs**: `http://localhost:8000/docs`
+- **Health Check**: `http://localhost:8000/health`
 
-## Production Deployment
+---
 
-### Railway (Backend)
+## 🤗 Hugging Face Spaces (Free GPU Option)
 
-1. **Deploy backend**:
+For hardware-accelerated TrOCR inference on a free T4 GPU:
+
+1. Create a new Space at [huggingface.co/new-space](https://huggingface.co/new-space).
+2. Choose **Gradio** SDK.
+3. Push the contents of the `backend/` directory to the Space repository.
+4. Go to **Settings → Variables and Secrets** and add:
+   - `GROQ_API_KEY`: Your Groq API key
+   - `GROQ_MODEL`: `qwen/qwen3.8-27b`
+5. The Space will automatically run `app.py` and provide a public Gradio demo URL.
+
+---
+
+## 🐧 Linux VPS Production Setup (Ubuntu / Debian + Nginx)
+
+If deploying directly on an Ubuntu/Debian server:
+
+### 1. System Packages
 ```bash
-cd backend
-railway login
-railway new
-railway add
+sudo apt update && sudo apt install -y python3.11 python3.11-venv nodejs npm nginx libgl1
 ```
 
-2. **Set environment variables**:
+### 2. Backend Service (Systemd)
+Create `/etc/systemd/system/prism-backend.service`:
+```ini
+[Unit]
+Description=PRISM FastAPI Backend
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/PRISM/backend
+Environment="PATH=/home/ubuntu/PRISM/backend/.venv/bin"
+EnvironmentFile=/home/ubuntu/PRISM/backend/.env
+ExecStart=/home/ubuntu/PRISM/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+Enable and start:
 ```bash
-railway env set GROQ_API_KEY=your_key_here
-railway env set TROCR_MODEL=microsoft/trocr-large-handwritten
-railway env set DATABASE_URL=sqlite:///./prescriptions.db
+sudo systemctl daemon-reload
+sudo systemctl enable --now prism-backend
 ```
 
-3. **Note**: TrOCR model (1.3GB) will be cached in `/app/model_cache/`
-
-### Vercel (Frontend)
-
-1. **Deploy frontend**:
+### 3. Frontend Service (PM2)
 ```bash
-cd frontend
+cd /home/ubuntu/PRISM/frontend
 npm install
-vercel
+npm run build
+sudo npm install -g pm2
+pm2 start npm --name "prism-frontend" -- start
+pm2 save
+pm2 startup
 ```
 
-2. **Set environment variable**:
-```bash
-vercel env add NEXT_PUBLIC_API_URL
-# Enter your Railway backend URL
+### 4. Nginx Reverse Proxy
+```nginx
+server {
+    server_name your-domain.com;
+
+    # Frontend
+    location / {
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+
+    # Backend API
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        client_max_body_size 15M;
+    }
+}
 ```
 
-### HuggingFace Spaces (Alternative Backend)
+---
 
-For free GPU access, deploy to HuggingFace Spaces:
+## ⚙️ Environment Variables Reference
 
-1. Create new Space with Python SDK
-2. Upload all backend files
-3. Add `app.py` with Gradio interface
-4. Set secrets: `GROQ_API_KEY`
+### Backend (`backend/.env`)
+| Variable | Required | Default / Recommended | Purpose |
+|---|---|---|---|
+| `GROQ_API_KEY` | **Yes** | — | Groq Cloud API authentication |
+| `GROQ_MODEL` | No | `qwen/qwen3.8-27b` | Primary multimodal vision model |
+| `GROQ_VISION_MODEL`| No | `qwen/qwen3.8-27b` | Vision chat completion model |
+| `TROCR_MODEL` | No | `microsoft/trocr-large-handwritten` | Hugging Face model identifier for OCR |
+| `DATABASE_URL` | No | `sqlite:///./prescriptions.db` | Storage for audit records & stats |
+| `OPENFDA_BASE` | No | `https://api.fda.gov/drug/label.json` | OpenFDA API endpoint |
 
-Benefits:
-- Free T4 GPU (10x faster TrOCR inference)
-- No cold starts
-- Automatic scaling
-
-## Environment Variables
-
-### Backend (.env)
-```
-GROQ_API_KEY=your_groq_api_key_here
-DATABASE_URL=sqlite:///./prescriptions.db
-GROQ_MODEL=llama-3.2-3b-instruct
-TROCR_MODEL=microsoft/trocr-large-handwritten
-OPENFDA_BASE=https://api.fda.gov/drug/label.json
-```
-
-### Frontend
-```
-NEXT_PUBLIC_API_URL=https://your-backend-url.railway.app
-```
-
-## Performance Optimization
-
-### Model Caching
-- TrOCR model (1.3GB) downloads on first use
-- Cached in `/app/model_cache/` or `~/.cache/huggingface/`
-- Subsequent starts are instant
-
-### Database
-- SQLite for development
-- Consider PostgreSQL for production with high volume
-- Database migrations handled automatically
-
-### Scaling
-- Backend: Stateless, can run multiple instances
-- Frontend: Static files, CDN-friendly
-- Model inference: CPU-bound, consider GPU deployment
-
-## Monitoring
-
-### Health Checks
-- Backend: `GET /health`
-- Returns model status and database connectivity
-
-### Metrics
-- Processing statistics: `GET /api/stats`
-- Tracks accuracy, processing times, failure rates
-
-### Logs
-- Structured logging with processing stages
-- Error tracking for failed extractions
-- Performance monitoring per pipeline stage
-
-## Security
-
-### API Keys
-- Store Groq API key securely
-- Use environment variables, never commit keys
-- Rotate keys regularly
-
-### File Uploads
-- 10MB file size limit
-- Image format validation
-- Temporary file cleanup
-
-### CORS
-- Currently allows all origins (development)
-- Restrict in production to your domain
-
-## Troubleshooting
-
-### Common Issues
-
-1. **TrOCR model download fails**:
-   - Check internet connection
-   - Verify disk space (1.3GB needed)
-   - Try manual download: `huggingface-cli download microsoft/trocr-large-handwritten`
-
-2. **Groq API errors**:
-   - Verify API key is correct
-   - Check rate limits (free tier: 30 requests/minute)
-   - Monitor usage at console.groq.com
-
-3. **Poor OCR accuracy**:
-   - Ensure image is high quality (>800px)
-   - Check image is properly oriented
-   - Verify handwriting is clear
-
-4. **PDF generation fails**:
-   - Check reportlab installation
-   - Verify font availability
-   - Check disk space for temporary files
-
-### Performance Issues
-
-1. **Slow processing**:
-   - TrOCR on CPU takes 8-12 seconds
-   - Consider GPU deployment for 1-2 second inference
-   - Check if model is properly cached
-
-2. **Memory usage**:
-   - TrOCR model uses ~2GB RAM
-   - Consider model quantization for lower memory
-   - Monitor container memory limits
-
-### Getting Help
-
-1. Check logs for detailed error messages
-2. Verify all environment variables are set
-3. Test with sample prescription images
-4. Check model and API connectivity with `/health` endpoint
+### Frontend (`frontend/.env.local`)
+| Variable | Required | Default | Purpose |
+|---|---|---|---|
+| `NEXT_PUBLIC_API_URL` | **Yes (in prod)**| `http://localhost:8000` | Points frontend fetch requests to backend |
