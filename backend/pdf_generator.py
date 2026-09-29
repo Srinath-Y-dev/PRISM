@@ -127,10 +127,12 @@ def generate_prescription_pdf(result: ExtractionResult) -> bytes:
             medicine_data = [medicine_headers]
             
             for med in result.medicines:
-                # Format medicine name with confidence
+                # Format medicine name with generic and confidence
                 med_name = med.name
+                if med.generic:
+                    med_name += f"\n({med.generic})"
                 if med.confidence < 1.0:
-                    med_name += f" ({int(med.confidence * 100)}%)"
+                    med_name += f" [{int(med.confidence * 100)}%]"
                 
                 row = [
                     med_name,
@@ -142,7 +144,7 @@ def generate_prescription_pdf(result: ExtractionResult) -> bytes:
                 medicine_data.append(row)
             
             # Create medicine table
-            medicine_table = Table(medicine_data, colWidths=[30*mm, 20*mm, 20*mm, 20*mm, 30*mm])
+            medicine_table = Table(medicine_data, colWidths=[35*mm, 18*mm, 18*mm, 18*mm, 31*mm])
             
             # Base table style
             table_style = [
@@ -163,14 +165,14 @@ def generate_prescription_pdf(result: ExtractionResult) -> bytes:
             
             # Add color coding for verification status
             for i, med in enumerate(result.medicines, 1):
-                if med.fda_verified:
-                    # Green background for FDA verified
+                if med.status == 'matched' or med.india_db_verified or med.fda_verified:
+                    # Green background for Verified
                     table_style.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor('#dcfce7')))
-                elif med.india_db_verified:
-                    # Yellow background for India DB verified
+                elif med.status == 'confirm':
+                    # Yellow background for Confirm
                     table_style.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor('#fef3c7')))
-                elif med.confidence < 0.4:
-                    # Light red background for low confidence
+                elif med.confidence < 0.6 or med.status == 'not_found':
+                    # Light red/rose background for unverified or low confidence
                     table_style.append(('BACKGROUND', (0, i), (-1, i), colors.HexColor('#fee2e2')))
             
             medicine_table.setStyle(TableStyle(table_style))
@@ -179,8 +181,8 @@ def generate_prescription_pdf(result: ExtractionResult) -> bytes:
             # Medicine verification legend
             legend_data = [
                 ['Legend:', ''],
-                ['Green = FDA Verified', 'Yellow = India DB Verified'],
-                ['White = Unverified', 'Red = Low Confidence (<40%)']
+                ['Green = Verified Indian Brand (Found)', 'Yellow = Needs Name Confirmation'],
+                ['Red/White = Unverified / Check Review', '']
             ]
             
             legend_table = Table(legend_data, colWidths=[50*mm, 50*mm])

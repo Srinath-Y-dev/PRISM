@@ -16,3 +16,5 @@ numpy==1.26.4
 psycopg2-binary==2.9.9
 aiohttp==3.9.5
 gradio==4.44.1
+rapidfuzz>=3.9.0
+pandas>=2.0.0

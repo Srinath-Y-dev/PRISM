@@ -5,6 +5,7 @@ import {
   Download, 
   RefreshCw, 
   AlertTriangle, 
+  AlertCircle,
   Copy, 
   Check, 
   Sparkles, 
@@ -98,11 +99,24 @@ export default function PrescriptionWorkspace({ initialTaskId }: PrescriptionWor
     return alerts;
   };
 
-  // Calculate items requiring human look based on dynamic threshold
+  // Calculate items requiring human look based on dynamic threshold or Indian DB verification
   const itemsNeedingReview = record.medicines.filter(
-    (m) => m.confidence < confidenceThreshold || (!m.fda_verified && !m.india_db_verified)
+    (m) => m.confidence < confidenceThreshold || m.status === 'confirm' || m.status === 'not_found' || (!m.fda_verified && !m.india_db_verified)
   );
   const safetyAlerts = checkDrugInteractions(record.medicines);
+
+  // Quick candidate auto-fix click
+  const handleCandidateClick = (index: number, candidate: string) => {
+    const updated = [...record.medicines];
+    updated[index] = {
+      ...updated[index],
+      name: candidate,
+      status: 'matched',
+      india_db_verified: true,
+      matched_name: candidate,
+    };
+    setRecord({ ...record, medicines: updated });
+  };
 
   // If initialTaskId is provided, poll for that task on mount
   useEffect(() => {
@@ -316,6 +330,9 @@ export default function PrescriptionWorkspace({ initialTaskId }: PrescriptionWor
       confidence: 1.0,
       fda_verified: true,
       india_db_verified: true,
+      status: 'matched',
+      generic: null,
+      candidates: [],
     };
     setRecord({ ...record, medicines: [...record.medicines, newMed] });
   };
@@ -332,7 +349,7 @@ export default function PrescriptionWorkspace({ initialTaskId }: PrescriptionWor
       '',
       'MEDICATIONS:',
       ...record.medicines.map((m, idx) => 
-        `${idx + 1}. ${m.name} | ${m.dosage || 'Standard dose'} | ${m.frequency || m.duration || 'As directed'} | Instructions: ${m.instructions || 'None'}`
+        `${idx + 1}. ${m.name}${m.generic ? ` (${m.generic})` : ''} | ${m.dosage || 'Standard dose'} | ${m.frequency || m.duration || 'As directed'} | Instructions: ${m.instructions || 'None'}`
       ),
       '',
       `General Advice: ${record.general_instructions || 'None'}`,
@@ -346,13 +363,15 @@ export default function PrescriptionWorkspace({ initialTaskId }: PrescriptionWor
   // Export CSV
   const handleExportCsv = () => {
     if (!record.medicines || record.medicines.length === 0) return;
-    const header = ['Medicine', 'Dosage', 'Frequency', 'Duration', 'Confidence', 'FDA_Verified', 'IndiaDB_Verified'];
+    const header = ['Medicine', 'Dosage', 'Frequency', 'Duration', 'Confidence', 'Status', 'Generic_Composition', 'FDA_Verified', 'IndiaDB_Verified'];
     const rows = record.medicines.map((m) => [
       `"${m.name.replace(/"/g, '""')}"`,
       `"${(m.dosage || '').replace(/"/g, '""')}"`,
       `"${(m.frequency || '').replace(/"/g, '""')}"`,
       `"${(m.duration || '').replace(/"/g, '""')}"`,
       `${Math.round(m.confidence * 100)}%`,
+      `"${m.status || 'not_found'}"`,
+      `"${(m.generic || '').replace(/"/g, '""')}"`,
       m.fda_verified ? 'Yes' : 'No',
       m.india_db_verified ? 'Yes' : 'No',
     ]);
@@ -393,24 +412,63 @@ export default function PrescriptionWorkspace({ initialTaskId }: PrescriptionWor
   };
 
   // Helper for medicine check badge styling
-  const renderDrugCheckBadge = (med: MedicineItem) => {
-    if (med.confidence >= 0.80 && (med.fda_verified || med.india_db_verified)) {
+  const renderDrugCheckBadge = (med: MedicineItem, idx: number) => {
+    const isMatched = med.status === 'matched' || ((med.fda_verified || med.india_db_verified) && med.status !== 'confirm');
+    const isConfirm = med.status === 'confirm' || (!isMatched && med.candidates && med.candidates.length > 0);
+
+    if (isMatched) {
       return (
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-          Found
-        </span>
+        <div className="flex flex-col items-end">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
+            <Check className="w-3 h-3 text-emerald-400" />
+            <span>Found</span>
+          </span>
+          {med.generic && (
+            <span 
+              className="text-[10px] text-emerald-300/80 mt-0.5 max-w-[150px] truncate text-right font-medium" 
+              title={med.generic}
+            >
+              {med.generic}
+            </span>
+          )}
+        </div>
       );
-    } else if (med.confidence < 0.70 && !med.dosage) {
+    } else if (isConfirm) {
       return (
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-          Confirm name
-        </span>
+        <div className="flex flex-col items-end gap-1">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/15 text-amber-400 border border-amber-500/30">
+            <AlertTriangle className="w-3 h-3 text-amber-400" />
+            <span>Confirm name</span>
+          </span>
+          {med.candidates && med.candidates.length > 0 && (
+            <div className="flex flex-wrap gap-1 justify-end max-w-[160px]">
+              {med.candidates.slice(0, 3).map((cand, cIdx) => (
+                <button
+                  key={cIdx}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleCandidateClick(idx, cand);
+                  }}
+                  className="text-[10px] px-1.5 py-0.5 rounded bg-amber-950/70 hover:bg-amber-900/80 text-amber-300 border border-amber-700/50 hover:border-amber-500 transition-colors"
+                  title={`Click to set name to: ${cand}`}
+                >
+                  {cand}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       );
     } else {
       return (
-        <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400 border border-amber-500/20">
-          Check dose
-        </span>
+        <div className="flex flex-col items-end">
+          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-400/90 border border-amber-500/25">
+            <AlertCircle className="w-3 h-3 text-amber-400" />
+            <span>Not found</span>
+          </span>
+          <span className="text-[10px] text-slate-500 mt-0.5">Review required</span>
+        </div>
       );
     }
   };
@@ -922,6 +980,21 @@ export default function PrescriptionWorkspace({ initialTaskId }: PrescriptionWor
                                 onChange={(e) => handleUpdateMedicine(idx, 'name', e.target.value)}
                                 className="bg-transparent border-0 focus:ring-1 focus:ring-cyan-500 rounded px-1.5 py-0.5 w-full text-white font-semibold text-sm outline-none"
                               />
+                              {med.generic && (
+                                <div className="text-[11px] text-cyan-300/90 font-mono mt-0.5 px-1.5 flex items-center gap-1.5">
+                                  <span className="text-[9px] uppercase px-1 py-0.2 rounded bg-cyan-950/90 border border-cyan-800/60 text-cyan-300 font-sans font-semibold">
+                                    Generic
+                                  </span>
+                                  <span className="truncate max-w-[240px]" title={med.generic}>
+                                    {med.generic}
+                                  </span>
+                                </div>
+                              )}
+                              {med.manufacturer && (
+                                <div className="text-[10px] text-slate-500 px-1.5 truncate max-w-[240px]" title={med.manufacturer}>
+                                  {med.manufacturer}
+                                </div>
+                              )}
                             </td>
 
                             {/* Strength (Editable) */}
@@ -953,7 +1026,7 @@ export default function PrescriptionWorkspace({ initialTaskId }: PrescriptionWor
 
                             {/* Drug Check Pill */}
                             <td className="py-2.5 px-4 text-right">
-                              {renderDrugCheckBadge(med)}
+                              {renderDrugCheckBadge(med, idx)}
                             </td>
 
                             {/* Delete Row Action */}

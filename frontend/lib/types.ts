@@ -9,6 +9,12 @@ export interface MedicineItem {
   confidence: number; // 0.0 to 1.0
   fda_verified: boolean;
   india_db_verified: boolean;
+  status?: 'matched' | 'confirm' | 'not_found';
+  matched_name?: string | null;
+  generic?: string | null;
+  manufacturer?: string | null;
+  candidates?: string[];
+  match_score?: number;
 }
 
 export interface ExtractionResult {

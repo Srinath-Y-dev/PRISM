@@ -11,6 +11,13 @@ class MedicineItem(BaseModel):
     confidence: float  # 0.0 to 1.0
     fda_verified: bool = False
     india_db_verified: bool = False
+    status: Optional[str] = "not_found"  # "matched" | "confirm" | "not_found"
+    matched_name: Optional[str] = None
+    generic: Optional[str] = None
+    manufacturer: Optional[str] = None
+    candidates: Optional[List[str]] = []
+    match_score: Optional[float] = 0.0
+
 
 
 class ExtractionResult(BaseModel):
